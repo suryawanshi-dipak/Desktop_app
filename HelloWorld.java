@@ -1,9 +1,9 @@
-import javax.swing.*;
 import java.awt.*;
 import java.net.*;
 import java.net.http.*;
 import java.nio.file.*;
 import java.util.regex.*;
+import javax.swing.*;
 
 public class HelloWorld {
 
@@ -194,7 +194,7 @@ public class HelloWorld {
         dlg.setVisible(true); // modal — blocks EDT; background thread drives it via invokeLater
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // ── Helpers  ──────────────────────────────────────────────────────────────
 
     private static String extractJsonValue(String json, String key) {
         Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
