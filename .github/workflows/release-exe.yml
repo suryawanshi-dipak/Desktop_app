@@ -36,14 +36,6 @@ jobs:
             exit 1
           }
 
-      - name: Compile Java app
-        shell: bash
-        run: |
-          mkdir -p build/classes
-          javac -d build/classes HelloWorld.java
-          mkdir -p build/libs
-          jar cfe build/libs/HelloWorld.jar HelloWorld -C build/classes .
-
       - name: Resolve version
         id: version
         shell: bash
@@ -53,6 +45,19 @@ jobs:
             version="${GITHUB_REF_NAME#v}"
           fi
           echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Inject build version into source
+        shell: bash
+        run: |
+          sed -i "s/CURRENT_VERSION = \"[^\"]*\"/CURRENT_VERSION = \"${{ steps.version.outputs.value }}\"/" HelloWorld.java
+
+      - name: Compile Java app
+        shell: bash
+        run: |
+          mkdir -p build/classes
+          javac -d build/classes HelloWorld.java
+          mkdir -p build/libs
+          jar cfe build/libs/HelloWorld.jar HelloWorld -C build/classes .
 
       - name: Build Windows EXE installer
         shell: bash
