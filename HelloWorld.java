@@ -33,7 +33,7 @@ public class HelloWorld {
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
         panel.setBorder(BorderFactory.createEmptyBorder(40, 40, 40, 40));
 
-        JLabel label = new JLabel("Hello, World!");
+        JLabel label = new JLabel("Hello, World2!");
         label.setFont(new Font("SansSerif", Font.BOLD, 28));
         label.setForeground(new Color(205, 214, 244));
         label.setAlignmentX(Component.CENTER_ALIGNMENT);
@@ -43,7 +43,7 @@ public class HelloWorld {
         sub.setForeground(new Color(108, 112, 134));
         sub.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        JButton btn = new JButton("Click Me!");
+        JButton btn = new JButton("Click Me2!");
         btn.setAlignmentX(Component.CENTER_ALIGNMENT);
         btn.setBackground(new Color(137, 180, 250));
         btn.setForeground(new Color(30, 30, 46));
