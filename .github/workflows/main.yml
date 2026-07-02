@@ -78,6 +78,10 @@ jobs:
             --win-dir-chooser \
             --java-options "-Dfile.encoding=UTF-8"
 
+      - name: Copy JAR to dist for release
+        shell: bash
+        run: cp build/libs/HelloWorld.jar "dist/HelloWorld-${{ steps.version.outputs.value }}.jar"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -90,7 +94,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: HelloWorld v${{ steps.version.outputs.value }}
-          files: dist/*.exe
+          files: |
+            dist/*.exe
+            dist/*.jar
           generate_release_notes: true
           draft: false
           prerelease: false

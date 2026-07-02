@@ -1,4 +1,6 @@
 import java.awt.*;
+import java.io.IOException;
+import java.lang.reflect.*;
 import java.net.*;
 import java.net.http.*;
 import java.nio.file.*;
@@ -33,7 +35,7 @@ public class HelloWorld {
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
         panel.setBorder(BorderFactory.createEmptyBorder(40, 40, 40, 40));
 
-        JLabel label = new JLabel("Hello, World2!");
+        JLabel label = new JLabel("Hello, World!");
         label.setFont(new Font("SansSerif", Font.BOLD, 28));
         label.setForeground(new Color(205, 214, 244));
         label.setAlignmentX(Component.CENTER_ALIGNMENT);
@@ -43,7 +45,7 @@ public class HelloWorld {
         sub.setForeground(new Color(108, 112, 134));
         sub.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        JButton btn = new JButton("Click Me2!");
+        JButton btn = new JButton("Click Me!");
         btn.setAlignmentX(Component.CENTER_ALIGNMENT);
         btn.setBackground(new Color(137, 180, 250));
         btn.setForeground(new Color(30, 30, 46));
@@ -100,7 +102,7 @@ public class HelloWorld {
         String latest = tagName.startsWith("v") ? tagName.substring(1) : tagName;
         if (!isNewer(latest, CURRENT_VERSION)) return;
 
-        String downloadUrl = findExeDownloadUrl(body);
+        String downloadUrl = findJarDownloadUrl(body);
         if (downloadUrl == null) return;
 
         SwingUtilities.invokeLater(() -> promptUpdate(owner, latest, downloadUrl));
@@ -110,100 +112,102 @@ public class HelloWorld {
         int choice = JOptionPane.showConfirmDialog(owner,
             "<html>A new version <b>v" + version + "</b> is available!<br>"
                 + "You are running: v" + CURRENT_VERSION + "<br><br>"
-                + "Download and install now?</html>",
+                + "Update now? The app will refresh automatically.</html>",
             "Update Available",
             JOptionPane.YES_NO_OPTION,
             JOptionPane.INFORMATION_MESSAGE);
 
         if (choice == JOptionPane.YES_OPTION) {
-            downloadAndInstall(owner, version, downloadUrl);
+            downloadAndHotSwap(owner, version, downloadUrl);
         }
     }
 
-    private static void downloadAndInstall(JFrame owner, String version, String downloadUrl) {
-        JDialog dlg = new JDialog(owner, "Downloading Update", true);
-        dlg.setSize(360, 110);
-        dlg.setLocationRelativeTo(owner);
-        dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+    /**
+     * Downloads the new JAR and hot-swaps the HelloWorld class in the running JVM.
+     * No installer, no restart — the old window closes and the new UI appears immediately.
+     */
+    private static void downloadAndHotSwap(JFrame owner, String version, String downloadUrl) {
+        owner.setTitle("Hello World App  —  Updating to v" + version + "...");
 
-        JLabel statusLabel = new JLabel("Connecting...");
-        JProgressBar progressBar = new JProgressBar(0, 100);
-        progressBar.setStringPainted(true);
-
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
-        panel.setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
-        panel.add(statusLabel, BorderLayout.NORTH);
-        panel.add(progressBar, BorderLayout.CENTER);
-        dlg.setContentPane(panel);
-
-        Thread downloadThread = new Thread(() -> {
+        new Thread(() -> {
             try {
-                Path tempDir = Files.createTempDirectory("hw-update-");
-                Path installer = tempDir.resolve("HelloWorld-" + version + "-setup.exe");
-
-                SwingUtilities.invokeLater(() -> statusLabel.setText("Downloading v" + version + "..."));
+                // 1. Download new JAR to a temp directory
+                Path tmp = Files.createTempDirectory("hw-update-");
+                Path jar = tmp.resolve("HelloWorld-" + version + ".jar");
 
                 URL url = URI.create(downloadUrl).toURL();
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setInstanceFollowRedirects(true);
                 conn.setRequestProperty("User-Agent", "HelloWorld-App/" + CURRENT_VERSION);
                 conn.connect();
-                int total = conn.getContentLength();
 
                 try (var in = conn.getInputStream();
-                     var out = Files.newOutputStream(installer)) {
+                     var out = Files.newOutputStream(jar)) {
                     byte[] buf = new byte[8192];
                     int read;
-                    long downloaded = 0;
-                    while ((read = in.read(buf)) != -1) {
-                        out.write(buf, 0, read);
-                        downloaded += read;
-                        if (total > 0) {
-                            int pct = (int) (downloaded * 100L / total);
-                            SwingUtilities.invokeLater(() -> progressBar.setValue(pct));
-                        }
-                    }
+                    while ((read = in.read(buf)) != -1) out.write(buf, 0, read);
                 }
 
+                // 2. Load the new HelloWorld class from the downloaded JAR.
+                //    Child-first strategy: try the JAR before delegating to the parent,
+                //    so the new version shadows the currently loaded class.
+                //    All other classes (javax.swing, etc.) are resolved by the platform
+                //    classloader as normal.
+                URLClassLoader loader = new URLClassLoader(
+                    new URL[]{jar.toUri().toURL()},
+                    ClassLoader.getPlatformClassLoader()
+                ) {
+                    @Override
+                    public Class<?> loadClass(String name) throws ClassNotFoundException {
+                        if ("HelloWorld".equals(name)) {
+                            try { return findClass(name); }
+                            catch (ClassNotFoundException ignored) {}
+                        }
+                        return super.loadClass(name);
+                    }
+                };
+                // Loader must stay open while the new class is running (lambda/inner-class
+                // loading happens lazily). Close it only when the JVM exits.
+                Runtime.getRuntime().addShutdownHook(
+                    new Thread(() -> { try { loader.close(); } catch (IOException ignored) {} })
+                );
+
+                Class<?> newClass = loader.loadClass("HelloWorld");
+                Method mainMethod = newClass.getMethod("main", String[].class);
+
+                // 3. On the EDT: dispose old window, launch new version in-process
                 SwingUtilities.invokeLater(() -> {
-                    statusLabel.setText("Launching installer...");
-                    progressBar.setValue(100);
+                    try {
+                        owner.dispose();
+                        mainMethod.invoke(null, (Object) new String[]{});
+                    } catch (ReflectiveOperationException e) {
+                        JOptionPane.showMessageDialog(null,
+                            "Hot-reload failed:\n" + e.getMessage(),
+                            "Update Error", JOptionPane.ERROR_MESSAGE);
+                    }
                 });
 
-                // Launch installer (cmd /c triggers UAC elevation if required)
-                new ProcessBuilder("cmd", "/c", installer.toAbsolutePath().toString()).start();
-
+            } catch (IOException | ReflectiveOperationException ex) {
                 SwingUtilities.invokeLater(() -> {
-                    dlg.dispose();
-                    System.exit(0);
-                });
-
-            } catch (Exception ex) {
-                SwingUtilities.invokeLater(() -> {
-                    dlg.dispose();
+                    owner.setTitle("Hello World App");
                     JOptionPane.showMessageDialog(owner,
                         "Update failed:\n" + ex.getMessage(),
-                        "Update Error",
-                        JOptionPane.ERROR_MESSAGE);
+                        "Update Error", JOptionPane.ERROR_MESSAGE);
                 });
             }
-        });
-        downloadThread.setDaemon(true);
-        downloadThread.start();
-
-        dlg.setVisible(true); // modal — blocks EDT; background thread drives it via invokeLater
+        }, "hw-update-thread").start();
     }
 
-    // ── Helpers  ──────────────────────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static String extractJsonValue(String json, String key) {
         Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
         return m.find() ? m.group(1) : null;
     }
 
-    private static String findExeDownloadUrl(String json) {
+    private static String findJarDownloadUrl(String json) {
         Matcher m = Pattern.compile(
-            "\"browser_download_url\"\\s*:\\s*\"([^\"]+\\.exe)\"").matcher(json);
+            "\"browser_download_url\"\\s*:\\s*\"([^\"]+/HelloWorld[^\"]+\\.jar)\"").matcher(json);
         return m.find() ? m.group(1) : null;
     }
 
