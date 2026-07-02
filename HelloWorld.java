@@ -13,6 +13,10 @@ public class HelloWorld {
     private static final String GITHUB_API =
         "https://api.github.com/repos/suryawanshi-dipak/Desktop_app/releases/latest";
 
+    // Persistent folder — survives across launches so the next startup can auto-apply
+    private static final Path UPDATE_DIR = Path.of(
+        System.getProperty("user.home"), "AppData", "Local", "HelloWorld", "updates");
+
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
             JFrame frame = buildFrame();
@@ -74,14 +78,33 @@ public class HelloWorld {
 
     private static void startUpdateCheck(JFrame owner) {
         Thread t = new Thread(() -> {
-            try {
-                checkForUpdate(owner);
-            } catch (Exception ignored) {
-                // Never crash the app due to a failed update check
-            }
+            // 1. Apply a previously-downloaded update silently (no dialog)
+            if (applyPendingUpdate(owner)) return;
+            // 2. Check GitHub for a brand-new update
+            try { checkForUpdate(owner); } catch (Exception ignored) {}
         });
         t.setDaemon(true);
         t.start();
+    }
+
+    /**
+     * If a newer JAR was downloaded in a previous session, hot-swap it silently.
+     * Returns true if a swap was initiated (caller should stop further checks).
+     */
+    private static boolean applyPendingUpdate(JFrame owner) {
+        try {
+            Path jar = UPDATE_DIR.resolve("HelloWorld-update.jar");
+            Path verFile = UPDATE_DIR.resolve("version.txt");
+            if (!Files.exists(jar) || !Files.exists(verFile)) return false;
+
+            String pendingVersion = Files.readString(verFile).trim();
+            if (!isNewer(pendingVersion, CURRENT_VERSION)) return false;
+
+            hotSwap(owner, pendingVersion, jar); // silent — no confirmation dialog
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private static void checkForUpdate(JFrame owner) throws Exception {
@@ -122,19 +145,15 @@ public class HelloWorld {
         }
     }
 
-    /**
-     * Downloads the new JAR and hot-swaps the HelloWorld class in the running JVM.
-     * No installer, no restart — the old window closes and the new UI appears immediately.
-     */
     private static void downloadAndHotSwap(JFrame owner, String version, String downloadUrl) {
         owner.setTitle("Hello World App  —  Updating to v" + version + "...");
 
         new Thread(() -> {
             try {
-                // 1. Download new JAR to a temp directory
-                Path tmp = Files.createTempDirectory("hw-update-");
-                Path jar = tmp.resolve("HelloWorld-" + version + ".jar");
+                Files.createDirectories(UPDATE_DIR);
+                Path jar = UPDATE_DIR.resolve("HelloWorld-update.jar");
 
+                // Download JAR
                 URL url = URI.create(downloadUrl).toURL();
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setInstanceFollowRedirects(true);
@@ -148,44 +167,10 @@ public class HelloWorld {
                     while ((read = in.read(buf)) != -1) out.write(buf, 0, read);
                 }
 
-                // 2. Load the new HelloWorld class from the downloaded JAR.
-                //    Child-first strategy: try the JAR before delegating to the parent,
-                //    so the new version shadows the currently loaded class.
-                //    All other classes (javax.swing, etc.) are resolved by the platform
-                //    classloader as normal.
-                URLClassLoader loader = new URLClassLoader(
-                    new URL[]{jar.toUri().toURL()},
-                    ClassLoader.getPlatformClassLoader()
-                ) {
-                    @Override
-                    public Class<?> loadClass(String name) throws ClassNotFoundException {
-                        if ("HelloWorld".equals(name)) {
-                            try { return findClass(name); }
-                            catch (ClassNotFoundException ignored) {}
-                        }
-                        return super.loadClass(name);
-                    }
-                };
-                // Loader must stay open while the new class is running (lambda/inner-class
-                // loading happens lazily). Close it only when the JVM exits.
-                Runtime.getRuntime().addShutdownHook(
-                    new Thread(() -> { try { loader.close(); } catch (IOException ignored) {} })
-                );
+                // Persist version so the next startup auto-applies without a dialog
+                Files.writeString(UPDATE_DIR.resolve("version.txt"), version);
 
-                Class<?> newClass = loader.loadClass("HelloWorld");
-                Method mainMethod = newClass.getMethod("main", String[].class);
-
-                // 3. On the EDT: dispose old window, launch new version in-process
-                SwingUtilities.invokeLater(() -> {
-                    try {
-                        owner.dispose();
-                        mainMethod.invoke(null, (Object) new String[]{});
-                    } catch (ReflectiveOperationException e) {
-                        JOptionPane.showMessageDialog(null,
-                            "Hot-reload failed:\n" + e.getMessage(),
-                            "Update Error", JOptionPane.ERROR_MESSAGE);
-                    }
-                });
+                hotSwap(owner, version, jar);
 
             } catch (IOException | ReflectiveOperationException ex) {
                 SwingUtilities.invokeLater(() -> {
@@ -196,6 +181,42 @@ public class HelloWorld {
                 });
             }
         }, "hw-update-thread").start();
+    }
+
+    private static void hotSwap(JFrame owner, String version, Path jar)
+            throws IOException, ReflectiveOperationException {
+        URLClassLoader loader = new URLClassLoader(
+            new URL[]{jar.toUri().toURL()},
+            ClassLoader.getPlatformClassLoader()
+        ) {
+            @Override
+            public Class<?> loadClass(String name) throws ClassNotFoundException {
+                if ("HelloWorld".equals(name)) {
+                    try { return findClass(name); }
+                    catch (ClassNotFoundException ignored) {}
+                }
+                return super.loadClass(name);
+            }
+        };
+        // Loader must stay open while the new class runs (lambdas load lazily).
+        // Close it only when the JVM exits.
+        Runtime.getRuntime().addShutdownHook(
+            new Thread(() -> { try { loader.close(); } catch (IOException ignored) {} })
+        );
+
+        Class<?> newClass = loader.loadClass("HelloWorld");
+        Method mainMethod = newClass.getMethod("main", String[].class);
+
+        SwingUtilities.invokeLater(() -> {
+            try {
+                if (owner != null) owner.dispose();
+                mainMethod.invoke(null, (Object) new String[]{});
+            } catch (ReflectiveOperationException e) {
+                JOptionPane.showMessageDialog(null,
+                    "Hot-reload failed:\n" + e.getMessage(),
+                    "Update Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
