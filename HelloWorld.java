@@ -44,7 +44,7 @@ public class HelloWorld {
         label.setForeground(new Color(205, 214, 244));
         label.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        JLabel sub = new JLabel("Your first Java desktop app 2");
+        JLabel sub = new JLabel("Your first Java desktop app 3");
         sub.setFont(new Font("SansSerif", Font.PLAIN, 13));
         sub.setForeground(new Color(108, 112, 134));
         sub.setAlignmentX(Component.CENTER_ALIGNMENT);
