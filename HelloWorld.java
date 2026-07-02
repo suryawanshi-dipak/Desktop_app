@@ -56,7 +56,7 @@ public class HelloWorld {
         btn.setMaximumSize(new Dimension(120, 36));
 
         btn.addActionListener(e -> JOptionPane.showMessageDialog(frame,
-            "Hello from Java Swing!",
+            "Hello from Dipak!",
             "Greeting",
             JOptionPane.INFORMATION_MESSAGE));
 
